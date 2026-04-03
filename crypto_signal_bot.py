@@ -18,7 +18,7 @@ from telegram.ext import (
 #  Переменные окружения (задаются в Render)
 # ──────────────────────────────────────────
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8776897403:AAHQg_1L-SOEnZVWkWE0A5lxlSa6YqVFWuY")
-WEBHOOK_URL    = os.environ.get("WEBHOOK_URL", "")   # https://твой-проект.onrender.com
+WEBHOOK_URL    = os.environ.get("WEBHOOK_URL", "")   # https://trading-bot-7mtw.onrender.com
 PORT           = int(os.environ.get("PORT", 10000))
 
 PAIRS = {
