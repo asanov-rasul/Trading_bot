@@ -1,24 +1,19 @@
 import os
 import logging
 import asyncio
+import nest_asyncio
 import requests
 import pandas as pd
 import numpy as np
-from flask import Flask, request
+from flask import Flask, request as flask_request
 from telegram import Update, Bot
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-# ──────────────────────────────────────────
-#  Переменные окружения (задаются в Render)
-# ──────────────────────────────────────────
+nest_asyncio.apply()
+
+# ─── Переменные окружения ───
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8776897403:AAHQg_1L-SOEnZVWkWE0A5lxlSa6YqVFWuY")
-WEBHOOK_URL    = os.environ.get("WEBHOOK_URL", "")   # https://trading-bot-7mtw.onrender.com
+WEBHOOK_URL    = os.environ.get("WEBHOOK_URL", "https://trading-bot-7mtw.onrender.com")   # https://trading-bot-7mtw.onrender.com
 PORT           = int(os.environ.get("PORT", 10000))
 
 PAIRS = {
@@ -31,7 +26,6 @@ PAIRS = {
 }
 
 BINANCE_URL = "https://api.binance.com/api/v3/klines"
-
 logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
 
 
@@ -39,8 +33,7 @@ logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=lo
 #  BINANCE
 # ══════════════════════════════════════════
 def fetch_candles(symbol: str, interval: str, limit: int = 250) -> pd.DataFrame:
-    params = {"symbol": symbol, "interval": interval, "limit": limit}
-    r = requests.get(BINANCE_URL, params=params, timeout=10)
+    r = requests.get(BINANCE_URL, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=10)
     r.raise_for_status()
     df = pd.DataFrame(r.json(), columns=[
         "time","open","high","low","close","volume",
@@ -90,7 +83,7 @@ def detect_pattern(df):
     us = (h[-1]-c[-1]) if is_bull else (h[-1]-o[-1])
     if ls > 2*body[-1] and us < body[-1]*0.5: return "🔨 Молот"
     if us > 2*body[-1] and ls < body[-1]*0.5 and is_bear: return "⭐ Падающая звезда"
-    if len(c)>=2:
+    if len(c) >= 2:
         if c[-2]<o[-2] and c[-1]>o[-1] and c[-1]>o[-2] and o[-1]<c[-2]: return "🟢 Бычье поглощение"
         if c[-2]>o[-2] and c[-1]<o[-1] and c[-1]<o[-2] and o[-1]>c[-2]: return "🔴 Медвежье поглощение"
     return "🟢 Бычья свеча" if is_bull else "🔴 Медвежья свеча"
@@ -125,19 +118,20 @@ def generate_signal(symbol: str) -> str:
                 else f"EMA50 < EMA200 ❌ Медвежий | {ema50}/{ema200}")
 
     b = br = 0
-    if rsi<40: b+=2
-    elif rsi>60: br+=2
-    b+=1 if rsi<50 else 0; br+=1 if rsi>=50 else 0
-    if mh>0 and ml>ms: b+=2
-    elif mh<0 and ml<ms: br+=2
-    if ema50>ema200: b+=2
-    else: br+=2
-    if price>ema50: b+=1
-    else: br+=1
-    if rsi_4h<50 and mh4>0: b+=1
-    elif rsi_4h>50 and mh4<0: br+=1
-    if "Бычье" in pat or "Молот" in pat: b+=1
-    if "Медвежье" in pat or "Звезда" in pat: br+=1
+    if rsi < 40: b += 2
+    elif rsi > 60: br += 2
+    if rsi < 50: b += 1
+    else: br += 1
+    if mh > 0 and ml > ms: b += 2
+    elif mh < 0 and ml < ms: br += 2
+    if ema50 > ema200: b += 2
+    else: br += 2
+    if price > ema50: b += 1
+    else: br += 1
+    if rsi_4h < 50 and mh4 > 0: b += 1
+    elif rsi_4h > 50 and mh4 < 0: br += 1
+    if "Бычье" in pat or "Молот" in pat: b += 1
+    if "Медвежье" in pat or "Звезда" in pat: br += 1
 
     diff = b - br
     if abs(diff) < 3:
@@ -198,11 +192,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text   = update.message.text.strip().upper()
-    symbol = None
-    for key, pair in PAIRS.items():
-        if text in (key, pair):
-            symbol = pair
-            break
+    symbol = next((pair for key, pair in PAIRS.items() if text in (key, pair)), None)
     if not symbol:
         await update.message.reply_text(
             f"❓ Не знаю пару *{text}*\n\nПопробуй: `BTC` `SOL` `ETH` `BNB` `XRP`",
@@ -214,31 +204,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ══════════════════════════════════════════
-#  FLASK APP + WEBHOOK
+#  FLASK + WEBHOOK
 # ══════════════════════════════════════════
-flask_app   = Flask(__name__)
-application = Application.builder().token(TELEGRAM_TOKEN).build()
-application.add_handler(CommandHandler("start", start))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+flask_app = Flask(__name__)
+
+# Создаём Application один раз
+ptb_app = Application.builder().token(TELEGRAM_TOKEN).build()
+ptb_app.add_handler(CommandHandler("start", start))
+ptb_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+loop = asyncio.get_event_loop()
+loop.run_until_complete(ptb_app.initialize())
 
 
-@flask_app.route("/", methods=["GET"])
+@flask_app.get("/")
 def index():
     return "✅ Crypto Signal Bot is running!", 200
 
 
-@flask_app.route(f"/webhook", methods=["POST"])
+@flask_app.post("/webhook")
 def webhook():
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    asyncio.run(application.process_update(update))
+    data   = flask_request.get_json(force=True)
+    update = Update.de_json(data, ptb_app.bot)
+    loop.run_until_complete(ptb_app.process_update(update))
     return "ok", 200
 
 
-@flask_app.route("/set_webhook", methods=["GET"])
+@flask_app.get("/set_webhook")
 def set_webhook():
     url = f"{WEBHOOK_URL}/webhook"
-    bot = Bot(token=TELEGRAM_TOKEN)
-    asyncio.run(bot.set_webhook(url=url))
+    loop.run_until_complete(ptb_app.bot.set_webhook(url=url))
     return f"✅ Webhook установлен: {url}", 200
 
 

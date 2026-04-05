@@ -3,3 +3,4 @@ flask
 requests
 pandas
 numpy
+nest_asyncio
