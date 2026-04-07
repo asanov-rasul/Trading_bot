@@ -1,4 +1,5 @@
 import os
+import sys
 import logging
 import asyncio
 import nest_asyncio
@@ -6,15 +7,36 @@ import requests
 import pandas as pd
 import numpy as np
 from flask import Flask, request as flask_request
-from telegram import Update, Bot
+from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 nest_asyncio.apply()
+
+logging.basicConfig(
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    level=logging.INFO,
+    stream=sys.stdout
+)
+log = logging.getLogger(__name__)
 
 # ─── Переменные окружения ───
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8776897403:AAHQg_1L-SOEnZVWkWE0A5lxlSa6YqVFWuY")
 WEBHOOK_URL    = os.environ.get("WEBHOOK_URL", "https://trading-bot-7mtw.onrender.com")   # https://trading-bot-7mtw.onrender.com
 PORT           = int(os.environ.get("PORT", 10000))
+
+# ─── Проверка при старте ───
+log.info("=== Crypto Signal Bot starting ===")
+log.info(f"PORT: {PORT}")
+log.info(f"TELEGRAM_TOKEN set: {'YES' if TELEGRAM_TOKEN else 'NO ← ОШИБКА!'}")
+log.info(f"WEBHOOK_URL set: {'YES' if WEBHOOK_URL else 'NO ← ОШИБКА!'}")
+
+if not TELEGRAM_TOKEN:
+    log.error("TELEGRAM_TOKEN не задан! Добавь в Environment Variables на Render.")
+    sys.exit(1)
+
+if not WEBHOOK_URL:
+    log.error("WEBHOOK_URL не задан! Добавь в Environment Variables на Render.")
+    sys.exit(1)
 
 PAIRS = {
     "BTC":   "BTCUSDT",
@@ -26,7 +48,6 @@ PAIRS = {
 }
 
 BINANCE_URL = "https://api.binance.com/api/v3/klines"
-logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
 
 
 # ══════════════════════════════════════════
@@ -208,13 +229,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════
 flask_app = Flask(__name__)
 
-# Создаём Application один раз
 ptb_app = Application.builder().token(TELEGRAM_TOKEN).build()
 ptb_app.add_handler(CommandHandler("start", start))
 ptb_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 loop = asyncio.get_event_loop()
 loop.run_until_complete(ptb_app.initialize())
+log.info("✅ Telegram bot initialized")
 
 
 @flask_app.get("/")
@@ -234,8 +255,11 @@ def webhook():
 def set_webhook():
     url = f"{WEBHOOK_URL}/webhook"
     loop.run_until_complete(ptb_app.bot.set_webhook(url=url))
+    log.info(f"Webhook set: {url}")
     return f"✅ Webhook установлен: {url}", 200
 
 
 if __name__ == "__main__":
+    log.info(f"Starting Flask on 0.0.0.0:{PORT}")
+    flask_app.run(host="0.0.0.0", port=PORT)if __name__ == "__main__":
     flask_app.run(host="0.0.0.0", port=PORT)
